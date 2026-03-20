@@ -16,10 +16,24 @@ export default function AuthPage() {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    const dealerToken = localStorage.getItem("dealer_token");
-    const adminToken = localStorage.getItem("admin_token");
-    if (dealerToken) setLocation("/workspace");
-    else if (adminToken) setLocation("/admin/dashboard");
+    const checkSession = async () => {
+      try {
+        const adminRes = await fetch("/api/admin/me", { credentials: "include" });
+        if (adminRes.ok) {
+          setLocation("/admin/dashboard");
+          return;
+        }
+
+        const dealerRes = await fetch("/api/dealer/me", { credentials: "include" });
+        if (dealerRes.ok) {
+          setLocation("/workspace");
+        }
+      } catch {
+        // no active session, stay on login page
+      }
+    };
+
+    checkSession();
   }, []);
 
   const [errorMsg, setErrorMsg] = useState("");
@@ -32,6 +46,7 @@ export default function AuthPage() {
       const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ email, password }),
       });
 
@@ -39,12 +54,6 @@ export default function AuthPage() {
 
       if (!res.ok) {
         throw new Error(data.message || "Invalid credentials");
-      }
-
-      if (data.role === "admin") {
-        localStorage.setItem("admin_token", data.token);
-      } else if (data.role === "dealer") {
-        localStorage.setItem("dealer_token", data.token);
       }
 
       setLocation(data.redirect ?? (data.role === "admin" ? "/admin/dashboard" : "/workspace"));

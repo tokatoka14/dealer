@@ -161,7 +161,7 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
     onNext();
   };
 
-  // Calculate pricing whenever model or discount status changes
+  // Calculate pricing whenever model or status changes
   useEffect(() => {
     if (!data.model || products.length === 0) return;
     setErrors({}); // Clear error when model is selected
@@ -171,38 +171,21 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
 
     const price = selected.price / 100; // Convert cents to GEL
 
-    const now = new Date();
-    const discountExpiry = selected.discountExpiry
-      ? new Date(selected.discountExpiry as any)
-      : null;
-    const isDiscountActive = !discountExpiry || !Number.isNaN(discountExpiry.getTime())
-      ? !discountExpiry || discountExpiry.getTime() >= now.getTime()
-      : true;
+    const hasPriorityStatus = Boolean(data.sociallyVulnerable || data.pensioner);
 
-    const discountPercentage =
-      selected.discountPercentage !== null && selected.discountPercentage !== undefined
-        ? Number(selected.discountPercentage)
-        : null;
-    const discountPrice =
-      selected.discountPrice !== null && selected.discountPrice !== undefined
-        ? Number(selected.discountPrice) / 100
-        : null;
-
-    // Discount logic source-of-truth: Admin Dashboard only.
-    // If admin provided a discount and it's active, apply it; otherwise no discount.
-    let finalPayable = price;
-    let subsidyRate = 0;
-    const maxDiscountGEL = 300;
-
-    if (isDiscountActive) {
-      if (discountPrice !== null && Number.isFinite(discountPrice) && discountPrice >= 0) {
-        // If backend stored a discounted price directly, still cap the discount amount at maxDiscountGEL.
-        const rawDiscountAmount = Math.max(0, price - discountPrice);
-        const cappedDiscountAmount = Math.min(rawDiscountAmount, maxDiscountGEL);
-        finalPayable = Math.max(0, price - cappedDiscountAmount);
-        subsidyRate = price > 0 ? cappedDiscountAmount / price : 0;
-      }
+    let subsidyRate = 0.5; // default 50% discount for ALL products
+    if (hasPriorityStatus) {
+      // 75% only for products explicitly marked as eligible
+      const discountableFlag = (selected as any).discountable;
+      const category = String(selected.category || "").toLowerCase();
+      const isEligibleFor75 =
+        typeof discountableFlag === "boolean"
+          ? discountableFlag
+          : category.includes("discountable") || category.includes("subsid") || category.includes("სუბსიდ");
+      subsidyRate = isEligibleFor75 ? 0.75 : 0.5;
     }
+
+    let finalPayable = Math.max(0, price * (1 - subsidyRate));
 
     const rawDeliveryFee = Number(data.deliveryFee ?? 0);
     const deliveryFee = isIronPlusDealer ? Math.max(0, rawDeliveryFee) : 0;
@@ -356,10 +339,17 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {products.map((model) => {
               const isSelected = data.model === model.id.toString() || data.model === model.name;
-              const displayPrice = model.price / 100;
-              const hasDiscount =
-                (model.discountPercentage !== null && model.discountPercentage !== undefined && Number(model.discountPercentage) > 0) ||
-                (model.discountPrice !== null && model.discountPrice !== undefined && Number(model.discountPrice) > 0);
+              const basePrice = model.price / 100;
+              const hasPriority = Boolean(data.sociallyVulnerable || data.pensioner);
+              const discFlag = (model as any).discountable;
+              const cat = String(model.category || "").toLowerCase();
+              const eligible75 =
+                typeof discFlag === "boolean"
+                  ? discFlag
+                  : cat.includes("discountable") || cat.includes("subsid") || cat.includes("სუბსიდ");
+              const cardRate = hasPriority && eligible75 ? 0.75 : 0.5;
+              const displayPrice = Math.max(0, basePrice * (1 - cardRate));
+              const hasDiscount = cardRate > 0;
 
               let deliveryFeeForModel = isIronPlusDealer ? DELIVERY_FEE_BY_MODEL[model.name] ?? 0 : 0;
               if (isIronPlusDealer && model.name.includes('L1-MZ-27')) {
@@ -398,7 +388,8 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
 
                   <div className="p-5">
                     <div className="font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">{model.name}</div>
-                    <div className="text-2xl font-bold text-primary">{displayPrice} <span className="text-sm font-normal text-muted-foreground">GEL</span></div>
+                    <div className="text-2xl font-bold text-primary">{displayPrice.toFixed(0)} <span className="text-sm font-normal text-muted-foreground">GEL</span></div>
+                    <div className="text-xs text-muted-foreground line-through">{basePrice} GEL</div>
 
                     {isIronPlusDealer && deliveryFeeForModel > 0 && (
                       <div className="mt-3 space-y-2">
@@ -443,9 +434,7 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
                   {hasDiscount && (
                     <div className="absolute top-3 right-3 z-10 bg-accent text-accent-foreground text-xs font-bold px-2 py-1 rounded-md flex items-center gap-1 shadow-sm">
                       <Percent className="w-3 h-3" />
-                      {model.discountPercentage !== null && model.discountPercentage !== undefined
-                        ? `${model.discountPercentage}%`
-                        : "%"}
+                      {(cardRate * 100).toFixed(0)}%
                     </div>
                   )}
                   

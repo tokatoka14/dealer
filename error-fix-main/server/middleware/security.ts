@@ -3,8 +3,22 @@ import cors from "cors";
 import { Express } from "express";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const CLIENT_URL = process.env.CLIENT_URL;
 const NODE_ENV = process.env.NODE_ENV || "development";
 const IS_PRODUCTION = NODE_ENV === "production";
+const DEV_LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const DEV_LAN_ORIGIN = /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/;
+
+const allowedOrigins = new Set(
+  [
+    FRONTEND_URL,
+    CLIENT_URL,
+    ...(process.env.ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  ].filter(Boolean) as string[]
+);
 
 export function configureSecurityMiddleware(app: Express) {
   // Helmet.js for secure HTTP headers
@@ -39,18 +53,22 @@ export function configureSecurityMiddleware(app: Express) {
   app.use(
     cors({
       origin: (origin, callback) => {
-        const allowedOrigins = [FRONTEND_URL, "http://localhost:5173", "http://localhost:5001"];
-        
-        // Allow requests with no origin (like mobile apps or curl requests) in development
-        if (!origin && !IS_PRODUCTION) {
+        // Allow requests with no Origin header (server-to-server, curl, same-origin non-browser flows)
+        if (!origin) {
           return callback(null, true);
         }
-        
-        if (allowedOrigins.includes(origin || "")) {
-          callback(null, true);
-        } else {
-          callback(new Error("Not allowed by CORS"));
+
+        // Always allow explicitly configured frontend origins.
+        if (allowedOrigins.has(origin)) {
+          return callback(null, true);
         }
+
+        // In development, allow localhost and local-network dev servers on any port.
+        if (!IS_PRODUCTION && (DEV_LOCAL_ORIGIN.test(origin) || DEV_LAN_ORIGIN.test(origin))) {
+          return callback(null, true);
+        }
+
+        return callback(new Error(`Not allowed by CORS: ${origin}`));
       },
       credentials: true,
       methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],

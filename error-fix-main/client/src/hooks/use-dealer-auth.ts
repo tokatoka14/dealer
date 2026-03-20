@@ -10,20 +10,13 @@ interface DealerInfo {
 
 export function useDealerAuth() {
   const [dealer, setDealer] = useState<DealerInfo | null>(null);
-  const [isDealer, setIsDealer] = useState<boolean>(!!localStorage.getItem("dealer_token"));
+  const [isDealer, setIsDealer] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    const token = localStorage.getItem("dealer_token");
-    if (!token) {
-      setIsDealer(false);
-      setIsLoading(false);
-      return;
-    }
-
     fetch("/api/dealer/me", {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
     })
       .then((res) => {
         if (!res.ok) throw new Error("Unauthorized");
@@ -34,7 +27,6 @@ export function useDealerAuth() {
         setIsDealer(true);
       })
       .catch(() => {
-        localStorage.removeItem("dealer_token");
         setIsDealer(false);
         setDealer(null);
       })
@@ -44,17 +36,28 @@ export function useDealerAuth() {
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/dealer/login", {
+      const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ email, password }),
       });
 
       if (!res.ok) throw new Error("Invalid credentials");
 
-      const { token, dealer: dealerData } = await res.json();
-      localStorage.setItem("dealer_token", token);
-      setDealer(dealerData);
+      const data = await res.json();
+      if (data.role !== "dealer") throw new Error("Dealer access required");
+      const dealerData = data.dealer as DealerInfo | undefined;
+
+      if (!dealerData) {
+        const meRes = await fetch("/api/dealer/me", { credentials: "include" });
+        if (!meRes.ok) throw new Error("Failed to load dealer profile");
+        const me = (await meRes.json()) as DealerInfo;
+        setDealer(me);
+      } else {
+        setDealer(dealerData);
+      }
+
       setIsDealer(true);
       setLocation("/workspace");
     } catch (err) {
@@ -65,10 +68,13 @@ export function useDealerAuth() {
   };
 
   const logout = () => {
-    localStorage.removeItem("dealer_token");
-    setIsDealer(false);
-    setDealer(null);
-    window.location.href = "http://localhost:5000/login";
+    fetch("/api/logout", { method: "POST", credentials: "include" })
+      .catch(() => undefined)
+      .finally(() => {
+        setIsDealer(false);
+        setDealer(null);
+        window.location.href = "http://localhost:5000/login";
+      });
   };
 
   return { dealer, isDealer, isLoading, login, logout };

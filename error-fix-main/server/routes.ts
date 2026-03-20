@@ -12,7 +12,7 @@ import jwt from "jsonwebtoken";
 import FormData from "form-data";
 import axios from "axios";
 import type { User, Dealer, Product, Branch } from "@shared/schema";
-import { withAuth, withAdminOnly, withDealerScope, type AuthRequest } from "./middleware/auth";
+import { withAuth, withAdminOnly, withDealerOnly, withDealerScope, type AuthRequest } from "./middleware/auth";
 import { validateBody, loginSchema, productQuerySchema, branchQuerySchema } from "./middleware/validation";
 import { securityConfig } from "./middleware/security";
 
@@ -31,7 +31,10 @@ const DEFAULT_WEBHOOKS = {
 };
 
 function authenticateAdmin(req: Request, res: Response, next: NextFunction) {
-  const token = req.headers.authorization?.split(" ")[1] || req.cookies?.admin_token;
+  const bearerToken = req.headers.authorization?.split(" ")[1];
+  const tokenFromHeader =
+    bearerToken && bearerToken !== "null" && bearerToken !== "undefined" ? bearerToken : undefined;
+  const token = tokenFromHeader || req.cookies?.admin_token || req.cookies?.auth_token;
   if (!token) return res.status(401).json({ message: "Unauthorized" });
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { email: string };
@@ -56,6 +59,41 @@ async function resolveDealerId(req: Request, res: Response) {
     return undefined;
   }
   return dealerId;
+}
+
+function isSubsidyEligibleProduct(product: Product) {
+  const discountableFlag = (product as any).discountable;
+  if (typeof discountableFlag === "boolean") {
+    return discountableFlag;
+  }
+
+  const category = String(product.category || "").toLowerCase();
+  return category.includes("discountable") || category.includes("subsid") || category.includes("სუბსიდ");
+}
+
+function calculateConditionalDiscountPricing(params: {
+  product: Product;
+  sociallyVulnerable: boolean;
+  pensioner: boolean;
+  deliveryFee: number;
+  ironPlusFee: number;
+}) {
+  const basePrice = params.product.price / 100;
+  const hasPriorityStatus = params.sociallyVulnerable || params.pensioner;
+  // Default 50% discount for ALL products; 75% only for eligible products when status is set
+  let subsidyRate = 0.5;
+  if (hasPriorityStatus) {
+    const isEligible = isSubsidyEligibleProduct(params.product);
+    subsidyRate = isEligible ? 0.75 : 0.5;
+  }
+  const discountedPrice = Math.max(0, basePrice * (1 - subsidyRate));
+  const finalPayable = Math.max(0, discountedPrice + Math.max(0, params.deliveryFee) + Math.max(0, params.ironPlusFee));
+
+  return {
+    price: Number(basePrice.toFixed(2)),
+    subsidyRate,
+    finalPayable: Number(finalPayable.toFixed(2)),
+  };
 }
 
 export async function registerRoutes(
@@ -181,6 +219,9 @@ export async function registerRoutes(
   app.post("/api/logout", (req: Request, res: Response, next: NextFunction) => {
     req.logout((err) => {
       if (err) return next(err);
+      res.clearCookie("auth_token", securityConfig.cookieOptions);
+      res.clearCookie("admin_token", securityConfig.cookieOptions);
+      res.clearCookie("dealer_token", securityConfig.cookieOptions);
       res.sendStatus(200);
     });
   });
@@ -361,7 +402,10 @@ export async function registerRoutes(
   app.post("/api/vision/verify-social-card", async (req: Request, res: Response) => {
 
     try {
-      const { image } = req.body;
+      if (!req.body || typeof req.body !== "object") {
+        return res.status(400).json({ message: "Request body is missing or not JSON" });
+      }
+      const { image, firstName, lastName, personalId, idNumber } = req.body;
       if (!image) {
         return res.status(400).json({ message: "Image is required" });
       }
@@ -385,7 +429,31 @@ export async function registerRoutes(
       });
 
       console.log("[Social Card Verification] n8n result:", n8nRes.data);
-      res.json(n8nRes.data);
+
+      const n8nData = n8nRes.data;
+      // If n8n returns an array, unwrap first element
+      const extracted = Array.isArray(n8nData) ? n8nData[0] : n8nData;
+
+      // Normalise: if n8n already returns { success, data } pass it through; otherwise wrap it
+      if (extracted && typeof extracted === "object" && "success" in extracted) {
+        return res.json(extracted);
+      }
+
+      // Perform identity match when n8n returns raw extracted fields
+      if (extracted && (firstName || lastName || personalId || idNumber)) {
+        const norm = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, "").toLowerCase();
+        const normId = (v: unknown) => String(v ?? "").trim().replace(/\s+/g, "");
+        const fMatch = !firstName || norm(extracted.firstName) === norm(firstName);
+        const lMatch = !lastName || norm(extracted.lastName) === norm(lastName);
+        const idKey = personalId || idNumber;
+        const idMatch = !idKey || normId(extracted.personalId) === normId(idKey);
+        if (fMatch && lMatch && idMatch) {
+          return res.json({ success: true, data: extracted });
+        }
+        return res.json({ success: false, data: extracted });
+      }
+
+      res.json({ success: true, data: extracted });
     } catch (err: any) {
       console.error("[Social Card Verification] Error:", err);
       const message = err.response?.data || err.message;
@@ -397,6 +465,9 @@ export async function registerRoutes(
   app.post("/api/vision/verify-pensioner", async (req: Request, res: Response) => {
 
     try {
+      if (!req.body || typeof req.body !== "object") {
+        return res.status(400).json({ message: "Request body is missing or not JSON" });
+      }
       const { image } = req.body;
       if (!image) {
         return res.status(400).json({ message: "Image is required" });
@@ -483,9 +554,38 @@ export async function registerRoutes(
     try {
       const input = submissionSchema.parse(req.body);
 
+      const allProducts = await storage.getProducts(dealerId);
+      const selectedProduct = allProducts.find(
+        (p) => p.name === input.model || p.id.toString() === input.model,
+      );
+
+      const deliveryFee = dealerKey === "iron" ? Math.max(0, Number(input.deliveryFee ?? 0)) : 0;
+      const ironPlusFee = dealerKey === "iron" && input.model.includes("L1-MZ-27") && input.ironPlus ? 100 : 0;
+
+      const pricing = selectedProduct
+        ? calculateConditionalDiscountPricing({
+            product: selectedProduct,
+            sociallyVulnerable: Boolean(input.sociallyVulnerable),
+            pensioner: Boolean(input.pensioner),
+            deliveryFee,
+            ironPlusFee,
+          })
+        : {
+            price: input.price,
+            subsidyRate: input.subsidyRate,
+            finalPayable: input.finalPayable,
+          };
+
       const n8nWebhookUrl = "https://blablabla233.app.n8n.cloud/webhook/process-document";
 
-      const payload = { ...input, dealer_id: dealerId, dealer_key: dealerKey };
+      const payload = {
+        ...input,
+        ...pricing,
+        deliveryFee,
+        ironPlusFee,
+        dealer_id: dealerId,
+        dealer_key: dealerKey,
+      };
       console.log("[Workspace Submit] dealer_id:", dealerId, "dealer_key:", dealerKey);
 
       const response = await fetch(n8nWebhookUrl, {
@@ -542,9 +642,10 @@ export async function registerRoutes(
   app.post("/api/admin/login", async (req: Request, res: Response) => {
     const { email, password } = req.body;
     if (email === ADMIN_EMAIL && bcrypt.compareSync(password, ADMIN_PASSWORD_HASH)) {
-      const token = jwt.sign({ email, role: "admin" }, JWT_SECRET, { expiresIn: "1d" });
-      res.cookie("admin_token", token, { httpOnly: true });
-      return res.json({ token });
+      const token = jwt.sign({ email, role: "admin" }, JWT_SECRET, { expiresIn: "2h" });
+      res.cookie("auth_token", token, securityConfig.cookieOptions);
+      res.cookie("admin_token", token, securityConfig.cookieOptions);
+      return res.json({ role: "admin", redirect: "/admin/dashboard" });
     }
     res.status(401).json({ message: "Invalid credentials" });
   });
@@ -567,27 +668,31 @@ export async function registerRoutes(
       const token = jwt.sign(
         { dealerId: dealer.id, dealerKey: dealer.key, email: dealer.email, role: "dealer" },
         JWT_SECRET,
-        { expiresIn: "1d" }
+        { expiresIn: "2h" }
       );
-      return res.json({ token, dealer: { id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email } });
+      res.cookie("auth_token", token, securityConfig.cookieOptions);
+      res.cookie("dealer_token", token, securityConfig.cookieOptions);
+      return res.json({ role: "dealer", dealer: { id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email } });
     } catch (err) {
       console.error("[Dealer Login] Error:", err);
       return res.status(500).json({ message: "Login failed" });
     }
   });
 
-  app.get("/api/dealer/me", async (req: Request, res: Response) => {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ message: "Unauthorized" });
+  app.get("/api/dealer/me", withAuth as any, withDealerOnly as any, async (req: Request, res: Response) => {
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
-      if (decoded.role !== "dealer") throw new Error();
-      const dealer = await storage.getDealerById(decoded.dealerId);
+      const dealerId = (req as AuthRequest).user?.dealerId;
+      if (!dealerId) return res.status(401).json({ message: "Unauthorized" });
+      const dealer = await storage.getDealerById(dealerId);
       if (!dealer) return res.status(404).json({ message: "Dealer not found" });
       return res.json({ id: dealer.id, key: dealer.key, name: dealer.name, email: dealer.email });
     } catch {
       return res.status(401).json({ message: "Unauthorized" });
     }
+  });
+
+  app.get("/api/admin/me", authenticateAdmin, (_req: Request, res: Response) => {
+    return res.json({ role: "admin", email: ADMIN_EMAIL });
   });
 
   // ── Admin Dealer Management ──

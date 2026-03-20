@@ -16,6 +16,18 @@ interface Props {
   onBack: () => void;
 }
 
+const GEORGIAN_ERRORS: Record<string, string> = {
+  "Document is older than 6 days.": "დოკუმენტი ვადაგასულია (6 დღეზე მეტია გასული ამონაწერის მომზადებიდან). გთხოვთ, ატვირთოთ ახალი ამონაწერი.",
+};
+
+function extractVisionApiError(payload: unknown): string | null {
+  const raw = typeof payload === "string" ? payload : JSON.stringify(payload ?? "");
+  for (const [key, georgian] of Object.entries(GEORGIAN_ERRORS)) {
+    if (raw.includes(key)) return georgian;
+  }
+  return null;
+}
+
 export function Step2Profile({ data, updateData, onNext, onBack }: Props) {
   const [isPensionerVerified, setIsPensionerVerified] = useState(false);
   const [isVerifyingPensioner, setIsVerifyingPensioner] = useState(false);
@@ -71,18 +83,21 @@ export function Step2Profile({ data, updateData, onNext, onBack }: Props) {
     setIsPensionerVerified(false);
 
     try {
-      const formData = new FormData();
-      if (!(pendingPensionerFile instanceof Blob)) {
-        throw new Error("pensioner file is not a Blob/​File");
-      }
-      formData.append("image", pendingPensionerFile);
+      const base64 = await fileToBase64(pendingPensionerFile);
 
-      // letting the browser populate the Content-Type header (including boundary)
-      const res = await axios.post("/api/vision/verify-pensioner", formData, {
+      const res = await axios.post("/api/vision/verify-pensioner", { image: base64 }, {
         withCredentials: true,
       });
 
       const verified = res.data;
+
+      const embeddedError = extractVisionApiError(verified);
+      if (embeddedError) {
+        setIsPensionerVerified(false);
+        setPensionerVerifyError(embeddedError);
+        return;
+      }
+
       const normalizeName = (v: string | undefined | null) =>
         String(v ?? "")
           .trim()
@@ -113,9 +128,11 @@ export function Step2Profile({ data, updateData, onNext, onBack }: Props) {
         setPensionerVerifyError("შესაბამისობა ვერ მოხერხდა");
       }
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "დადასტურება ვერ მოხერხდა";
+      const errData = (err as any)?.response?.data;
+      const georgianMsg = extractVisionApiError(errData);
+      const msg = georgianMsg
+        ?? (typeof errData?.message === "string" ? errData.message : null)
+        ?? "დადასტურება ვერ მოხერხდა";
       setIsPensionerVerified(false);
       setPensionerVerifyError(msg);
     } finally {
@@ -131,25 +148,23 @@ export function Step2Profile({ data, updateData, onNext, onBack }: Props) {
     setIsSocialVerified(false);
 
     try {
-      const formData = new FormData();
-      if (!(pendingSocialFile instanceof Blob)) {
-        throw new Error("social file is not a Blob/File");
-      }
-      formData.append("file", pendingSocialFile);
-      
-      // Add idData fields to request body for server to extract
-      formData.append("firstName", data.firstName || "");
-      formData.append("lastName", data.lastName || "");
-      formData.append("personalId", data.idNumber || "");
-      formData.append("idNumber", data.idNumber || "");
+      const base64 = await fileToBase64(pendingSocialFile);
 
-      // letting the browser populate the Content-Type header (including boundary)
-      const res = await axios.post("/api/vision/verify-social", formData, {
+      const res = await axios.post("/api/vision/verify-social-card", {
+        image: base64,
+        firstName: data.firstName || "",
+        lastName: data.lastName || "",
+        personalId: data.idNumber || "",
+        idNumber: data.idNumber || "",
+      }, {
         withCredentials: true,
       });
 
-      // Response should be { success: true, data: matchedMember }
-      if (res.data?.success && res.data?.data) {
+      const embeddedErr = extractVisionApiError(res.data);
+      if (embeddedErr) {
+        setIsSocialVerified(false);
+        setSocialVerifyError(embeddedErr);
+      } else if (res.data?.success && res.data?.data) {
         setIsSocialVerified(true);
         setSocialVerifyError(null);
       } else {
@@ -157,9 +172,11 @@ export function Step2Profile({ data, updateData, onNext, onBack }: Props) {
         setSocialVerifyError("შესაბამისობა ვერ მოხერხდა");
       }
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "დადასტურება ვერ მოხერხდა";
+      const errData = (err as any)?.response?.data;
+      const georgianMsg = extractVisionApiError(errData);
+      const msg = georgianMsg
+        ?? (typeof errData?.message === "string" ? errData.message : null)
+        ?? "დადასტურება ვერ მოხერხდა";
       setIsSocialVerified(false);
       setSocialVerifyError(msg);
     } finally {
