@@ -187,7 +187,7 @@ export default function AdminDashboard() {
       if (!res.ok) {
         if (res.status === 401) {
           localStorage.removeItem("admin_token");
-          window.location.href = "http://localhost:5000/login";
+          window.location.href = "/login";
           return;
         }
         throw new Error("Failed to fetch");

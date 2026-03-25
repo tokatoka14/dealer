@@ -7,18 +7,16 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Receipt, Percent, Loader2, CheckCircle2, AlertCircle, Search } from "lucide-react";
-import { useAuth } from "@/hooks/use-auth";
-
 interface Props {
   data: Partial<SubmissionInput>;
   updateData: (data: Partial<SubmissionInput>) => void;
   onNext: () => void;
   onBack: () => void;
   dealerKey?: string;
+  dealerName?: string;
 }
 
-export function Step3Product({ data, updateData, onNext, onBack, dealerKey: dealerKeyProp }: Props) {
-  const { user } = useAuth();
+export function Step3Product({ data, updateData, onNext, onBack, dealerKey: dealerKeyProp, dealerName }: Props) {
   const [products, setProducts] = useState<Product[]>([]);
   const [branches, setBranches] = useState<Array<{ id: number; name: string }>>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -29,8 +27,8 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
     model: useRef<HTMLDivElement>(null),
   };
 
-  // Derive dealer key: explicit prop takes priority, then fallback to username-based logic
-  const resolvedDealerKey = dealerKeyProp || (user?.username === "info@gorgia.ge" ? "gorgia" : "iron");
+  // Derive dealer key from explicit prop
+  const resolvedDealerKey = dealerKeyProp || "iron";
   const isGorgiaUser = resolvedDealerKey === "gorgia";
   const isIronPlusDealer = resolvedDealerKey === "iron";
 
@@ -43,12 +41,12 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
     "C1 ბუხარი": 200,
   };
 
-  // Auto-fill supplierName for demo user
+  // Auto-fill supplierName from dealer session name (read-only source of truth)
   useEffect(() => {
-    if (user?.username === "demo@example.com" && !data.supplierName) {
-      updateData({ supplierName: "iron+" });
+    if (dealerName && !isGorgiaUser && !data.supplierName) {
+      updateData({ supplierName: dealerName });
     }
-  }, [user?.username, data.supplierName, updateData]);
+  }, [dealerName, isGorgiaUser]);
 
   useEffect(() => {
     const fetchProducts = async () => {
@@ -161,6 +159,8 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
     onNext();
   };
 
+  const MAX_SUBSIDY_GEL = 300;
+
   // Calculate pricing whenever model or status changes
   useEffect(() => {
     if (!data.model || products.length === 0) return;
@@ -170,22 +170,23 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
     if (!selected) return;
 
     const price = selected.price / 100; // Convert cents to GEL
-
     const hasPriorityStatus = Boolean(data.sociallyVulnerable || data.pensioner);
 
-    let subsidyRate = 0.5; // default 50% discount for ALL products
+    // 75% (or admin-configured value) when either toggle is ON; otherwise 50%
+    let subsidyRate = 0.5;
     if (hasPriorityStatus) {
-      // 75% only for products explicitly marked as eligible
-      const discountableFlag = (selected as any).discountable;
-      const category = String(selected.category || "").toLowerCase();
-      const isEligibleFor75 =
-        typeof discountableFlag === "boolean"
-          ? discountableFlag
-          : category.includes("discountable") || category.includes("subsid") || category.includes("სუბსიდ");
-      subsidyRate = isEligibleFor75 ? 0.75 : 0.5;
+      const adminPct = selected.discountPercentage;
+      subsidyRate = (adminPct && adminPct > 0) ? adminPct / 100 : 0.75;
     }
 
-    let finalPayable = Math.max(0, price * (1 - subsidyRate));
+    // Apply 300 GEL subsidy cap
+    let subsidyAmount = price * subsidyRate;
+    if (subsidyAmount > MAX_SUBSIDY_GEL) {
+      subsidyAmount = MAX_SUBSIDY_GEL;
+      subsidyRate = price > 0 ? subsidyAmount / price : 0;
+    }
+
+    let finalPayable = Math.max(0, price - subsidyAmount);
 
     const rawDeliveryFee = Number(data.deliveryFee ?? 0);
     const deliveryFee = isIronPlusDealer ? Math.max(0, rawDeliveryFee) : 0;
@@ -195,6 +196,7 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
     updateData({
       price,
       subsidyRate,
+      subsidyAmount,
       deliveryFee,
       finalPayable,
       ironPlusFee,
@@ -220,43 +222,41 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-2" ref={fieldRefs.supplierName}>
           <Label htmlFor="supplierName" className={cn(errors.supplierName && "text-destructive")}>გამყიდველი კომპანიის სახელი *</Label>
-          {isGorgiaUser ? (
-            <select
-              id="supplierName"
-              value={data.supplierId || ""}
-              onChange={(e) => {
-                const branchId = e.target.value;
-                const branch = branches.find((b) => String(b.id) === branchId);
-                updateData({
-                  supplierId: branchId,
-                  supplierName: branch?.name || "",
-                });
-                setErrors((prev) => ({ ...prev, supplierName: false, supplierId: false }));
-              }}
-              className={cn(
-                "h-12 rounded-xl w-full",
-                errors.supplierName && "border-destructive bg-destructive/5",
-                errors.supplierId && "border-destructive bg-destructive/5",
-              )}
-            >
-              <option value="">აირჩიეთ ფილიალი</option>
-              {branches.map((branch) => (
-                <option key={branch.id} value={branch.id}>
-                  {branch.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <Input
-              id="supplierName"
-              placeholder="შეიყვანეთ გამყიდველი კომპანიის სახელი"
-              value={data.supplierName || ""}
-              onChange={(e) => {
-                updateData({ supplierName: e.target.value });
-                setErrors((prev) => ({ ...prev, supplierName: false }));
-              }}
-              className={cn("h-12 rounded-xl", errors.supplierName && "border-destructive bg-destructive/5")}
-            />
+          <Input
+            id="supplierName"
+            value={dealerName || data.supplierName || ""}
+            readOnly
+            disabled
+            className={cn("h-12 rounded-xl bg-muted cursor-not-allowed", errors.supplierName && "border-destructive bg-destructive/5")}
+          />
+          {isGorgiaUser && (
+            <div className="mt-2">
+              <Label htmlFor="branchSelect" className={cn(errors.supplierId && "text-destructive")}>ფილიალი *</Label>
+              <select
+                id="branchSelect"
+                value={data.supplierId || ""}
+                onChange={(e) => {
+                  const branchId = e.target.value;
+                  const branch = branches.find((b) => String(b.id) === branchId);
+                  updateData({
+                    supplierId: branchId,
+                    supplierName: branch?.name || dealerName || "",
+                  });
+                  setErrors((prev) => ({ ...prev, supplierName: false, supplierId: false }));
+                }}
+                className={cn(
+                  "h-12 rounded-xl w-full mt-1 border border-input bg-background px-3",
+                  errors.supplierId && "border-destructive bg-destructive/5",
+                )}
+              >
+                <option value="">აირჩიეთ ფილიალი</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
         </div>
         {!isGorgiaUser && (
@@ -341,14 +341,18 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
               const isSelected = data.model === model.id.toString() || data.model === model.name;
               const basePrice = model.price / 100;
               const hasPriority = Boolean(data.sociallyVulnerable || data.pensioner);
-              const discFlag = (model as any).discountable;
-              const cat = String(model.category || "").toLowerCase();
-              const eligible75 =
-                typeof discFlag === "boolean"
-                  ? discFlag
-                  : cat.includes("discountable") || cat.includes("subsid") || cat.includes("სუბსიდ");
-              const cardRate = hasPriority && eligible75 ? 0.75 : 0.5;
-              const displayPrice = Math.max(0, basePrice * (1 - cardRate));
+              let cardRate = 0.5;
+              if (hasPriority) {
+                const adminPct = model.discountPercentage;
+                cardRate = (adminPct && adminPct > 0) ? adminPct / 100 : 0.75;
+              }
+              let cardSubsidy = basePrice * cardRate;
+              const isCapped = cardSubsidy > MAX_SUBSIDY_GEL;
+              if (isCapped) {
+                cardSubsidy = MAX_SUBSIDY_GEL;
+                cardRate = basePrice > 0 ? cardSubsidy / basePrice : 0;
+              }
+              const displayPrice = Math.max(0, basePrice - cardSubsidy);
               const hasDiscount = cardRate > 0;
 
               let deliveryFeeForModel = isIronPlusDealer ? DELIVERY_FEE_BY_MODEL[model.name] ?? 0 : 0;
@@ -410,23 +414,6 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
                           <span className="font-semibold text-foreground">{deliveryFeeForModel} GEL</span>
                         </div>
                         
-                        {/* Iron+ option for L1-MZ-27 - Only for Iron Plus dealer */}
-                        {model.name.includes("L1-MZ-27") && isSelected && isIronPlusDealer && (
-                          <div className="flex items-center justify-between text-sm text-muted-foreground">
-                            <label className="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={data.ironPlus || false}
-                                onChange={(e) => {
-                                  updateData({ ironPlus: e.target.checked });
-                                }}
-                                className="h-4 w-4 rounded border-muted-foreground"
-                              />
-                              Iron+ პაკეტი
-                            </label>
-                            <span className="font-semibold text-foreground">+100 GEL</span>
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
@@ -434,7 +421,7 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
                   {hasDiscount && (
                     <div className="absolute top-3 right-3 z-10 bg-accent text-accent-foreground text-xs font-bold px-2 py-1 rounded-md flex items-center gap-1 shadow-sm">
                       <Percent className="w-3 h-3" />
-                      {(cardRate * 100).toFixed(0)}%
+                      {isCapped ? `${cardSubsidy.toFixed(0)} GEL` : `${(cardRate * 100).toFixed(0)}%`}
                     </div>
                   )}
                   
@@ -480,7 +467,11 @@ export function Step3Product({ data, updateData, onNext, onBack, dealerKey: deal
             <h4 className="text-background/80 font-medium mb-1">ფასდაკლება</h4>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/20 text-primary-foreground text-sm font-semibold">
               <Percent className="w-3.5 h-3.5" /> {(data.subsidyRate * 100).toFixed(0)}%
+              {data.subsidyAmount !== undefined && ` (−${data.subsidyAmount.toFixed(0)} GEL)`}
             </div>
+            {data.subsidyAmount !== undefined && data.subsidyAmount >= MAX_SUBSIDY_GEL && (
+              <p className="text-xs text-background/60 mt-1">მაქს. სუბსიდია: {MAX_SUBSIDY_GEL} GEL</p>
+            )}
           </div>
 
           <div className="h-px w-full sm:w-px sm:h-12 bg-background/20 hidden sm:block"></div>

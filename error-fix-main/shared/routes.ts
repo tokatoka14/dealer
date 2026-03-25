@@ -37,6 +37,7 @@ export const submissionSchema = z.object({
   model: z.string(),
   price: z.number(),
   subsidyRate: z.number(),
+  subsidyAmount: z.number().default(0),
   deliveryFee: z.number().default(0),
   ironPlus: z.boolean().default(false),
   ironPlusFee: z.number().default(0),

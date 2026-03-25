@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { AnimatePresence } from "framer-motion";
 import { LogOut, LayoutDashboard, Loader2 } from "lucide-react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export default function DealerDashboard() {
   const { dealer, logout, isLoading: authLoading } = useDealerAuth();
@@ -36,13 +37,12 @@ export default function DealerDashboard() {
     if (!dealer) return;
     setIsSubmitting(true);
     try {
-      const token = localStorage.getItem("dealer_token");
       const res = await fetch("/api/workspace/submit", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
+        credentials: "include",
         body: JSON.stringify(formData),
       });
 
@@ -130,20 +130,25 @@ export default function DealerDashboard() {
           <StepIndicator currentStep={step} />
 
           <div className="mt-8 relative min-h-[400px]">
-            <AnimatePresence mode="wait">
-              {step === 1 && (
-                <Step1Identity key="step1" data={formData} updateData={updateData} onNext={nextStep} />
-              )}
-              {step === 2 && (
-                <Step2Profile key="step2" data={formData} updateData={updateData} onNext={nextStep} onBack={prevStep} />
-              )}
-              {step === 3 && (
-                <Step3Product key="step3" data={formData} updateData={updateData} onNext={nextStep} onBack={prevStep} dealerKey={dealer.key} />
-              )}
-              {step === 4 && (
-                <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isSubmitting} />
-              )}
-            </AnimatePresence>
+            <ErrorBoundary
+              fallbackMessage="ნაბიჯის ჩატვირთვა ვერ მოხერხდა"
+              onReset={() => { setStep(1); setFormData({}); }}
+            >
+              <AnimatePresence mode="wait">
+                {step === 1 && (
+                  <Step1Identity key="step1" data={formData} updateData={updateData} onNext={nextStep} />
+                )}
+                {step === 2 && (
+                  <Step2Profile key="step2" data={formData} updateData={updateData} onNext={nextStep} onBack={prevStep} />
+                )}
+                {step === 3 && (
+                  <Step3Product key="step3" data={formData} updateData={updateData} onNext={nextStep} onBack={prevStep} dealerKey={dealer.key} dealerName={dealer.name} />
+                )}
+                {step === 4 && (
+                  <Step4Finalize key="step4" data={formData} updateData={updateData} onSubmit={handleSubmit} onBack={prevStep} isSubmitting={isSubmitting} />
+                )}
+              </AnimatePresence>
+            </ErrorBoundary>
           </div>
         </div>
       </main>

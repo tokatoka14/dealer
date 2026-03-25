@@ -46,7 +46,7 @@ export function useAdminAuth() {
       .catch(() => undefined)
       .finally(() => {
         setIsAdmin(false);
-        window.location.href = "http://localhost:5000/login";
+        window.location.href = "/login";
       });
   };
 

@@ -91,6 +91,13 @@ export function Step2Profile({ data, updateData, onNext, onBack }: Props) {
 
       const verified = res.data;
 
+      // Safety: if the response is empty or not an object, treat as failure
+      if (!verified || typeof verified !== "object") {
+        setIsPensionerVerified(false);
+        setPensionerVerifyError("პასუხი ცარიელია ან არასწორი ფორმატით მოვიდა");
+        return;
+      }
+
       const embeddedError = extractVisionApiError(verified);
       if (embeddedError) {
         setIsPensionerVerified(false);
@@ -98,34 +105,38 @@ export function Step2Profile({ data, updateData, onNext, onBack }: Props) {
         return;
       }
 
-      const normalizeName = (v: string | undefined | null) =>
-        String(v ?? "")
-          .trim()
-          .replace(/\s+/g, "")
-          .toLowerCase();
+      // If n8n explicitly returns success: false, treat as failure
+      if (verified.success === false) {
+        setIsPensionerVerified(false);
+        setPensionerVerifyError("დოკუმენტის გადამოწმება ვერ მოხერხდა");
+        return;
+      }
 
       const normalizeId = (v: string | undefined | null) =>
         String(v ?? "")
           .trim()
           .replace(/\s+/g, "");
 
-      const fName = normalizeName(verified?.firstName);
-      const lName = normalizeName(verified?.lastName);
       const pid = normalizeId(verified?.personalId);
-
-      const formFirstName = normalizeName(data.firstName as string | undefined);
-      const formLastName = normalizeName(data.lastName as string | undefined);
       const formId = normalizeId(data.idNumber as string | undefined);
 
-      const idMatch = pid === formId;
-      const nameMatch = fName === formFirstName && lName === formLastName;
+      // personalId is the primary unique identifier
+      const idMatch = pid.length > 0 && formId.length > 0 && pid === formId;
 
-      if (idMatch && nameMatch) {
+      if (idMatch) {
+        // ID match is sufficient — minor name spelling differences (e.g. ელენე vs ელენა) are allowed
         setIsPensionerVerified(true);
         setPensionerVerifyError(null);
+        // Auto-toggle pensioner switcher ON on successful verification
+        if (!data.pensioner) {
+          updateData({ pensioner: true });
+        }
       } else {
+        // personalId mismatch — verification fails
         setIsPensionerVerified(false);
-        setPensionerVerifyError("შესაბამისობა ვერ მოხერხდა");
+        setPensionerVerifyError(
+          "პირადი ნომერი არ ემთხვევა. პირადობის მოწმობისა და პენსიონერის დოკუმენტის პირადი ნომრები განსხვავებულია."
+        );
       }
     } catch (err: unknown) {
       const errData = (err as any)?.response?.data;

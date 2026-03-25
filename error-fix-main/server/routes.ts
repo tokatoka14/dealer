@@ -22,12 +22,12 @@ const ADMIN_PASSWORD_HASH = bcrypt.hashSync("iron123#", 12);
 
 // Default webhook configuration for new dealers/dashboards
 const DEFAULT_WEBHOOKS = {
-  identityCard: "https://blablabla233.app.n8n.cloud/webhook/process-id-card",
-  pensioner: "https://blablabla233.app.n8n.cloud/webhook/process-document",
-  socialCard: "https://blablabla233.app.n8n.cloud/webhook/socialuri-id-card",
-  receipt: "https://blablabla233.app.n8n.cloud/webhook-test/qvitari",
-  oven: "https://blablabla233.app.n8n.cloud/webhook-test/gumeliskodi",
-  submission: "https://blablabla233.app.n8n.cloud/webhook/process-document"
+  identityCard: "https://tok17.app.n8n.cloud/webhook/process-id-card",
+  pensioner: "https://tok17.app.n8n.cloud/webhook/process-document",
+  socialCard: "https://tok17.app.n8n.cloud/webhook-test/socialuri-id-card",
+  receipt: "https://tok17.app.n8n.cloud/webhook/qvitari",
+  oven: "https://tok17.app.n8n.cloud/webhook-test/gumeliskodi",
+  submission: "https://tok17.app.n8n.cloud/webhook/process-document"
 };
 
 function authenticateAdmin(req: Request, res: Response, next: NextFunction) {
@@ -61,15 +61,7 @@ async function resolveDealerId(req: Request, res: Response) {
   return dealerId;
 }
 
-function isSubsidyEligibleProduct(product: Product) {
-  const discountableFlag = (product as any).discountable;
-  if (typeof discountableFlag === "boolean") {
-    return discountableFlag;
-  }
-
-  const category = String(product.category || "").toLowerCase();
-  return category.includes("discountable") || category.includes("subsid") || category.includes("სუბსიდ");
-}
+const MAX_SUBSIDY_GEL = 300;
 
 function calculateConditionalDiscountPricing(params: {
   product: Product;
@@ -80,18 +72,28 @@ function calculateConditionalDiscountPricing(params: {
 }) {
   const basePrice = params.product.price / 100;
   const hasPriorityStatus = params.sociallyVulnerable || params.pensioner;
-  // Default 50% discount for ALL products; 75% only for eligible products when status is set
+
+  // 75% (or admin-configured value) when either toggle is ON; otherwise 50%
   let subsidyRate = 0.5;
   if (hasPriorityStatus) {
-    const isEligible = isSubsidyEligibleProduct(params.product);
-    subsidyRate = isEligible ? 0.75 : 0.5;
+    const adminPct = params.product.discountPercentage;
+    subsidyRate = (adminPct && adminPct > 0) ? adminPct / 100 : 0.75;
   }
-  const discountedPrice = Math.max(0, basePrice * (1 - subsidyRate));
+
+  // Calculate raw subsidy and apply 300 GEL cap
+  let subsidyAmount = basePrice * subsidyRate;
+  if (subsidyAmount > MAX_SUBSIDY_GEL) {
+    subsidyAmount = MAX_SUBSIDY_GEL;
+    subsidyRate = basePrice > 0 ? subsidyAmount / basePrice : 0;
+  }
+
+  const discountedPrice = Math.max(0, basePrice - subsidyAmount);
   const finalPayable = Math.max(0, discountedPrice + Math.max(0, params.deliveryFee) + Math.max(0, params.ironPlusFee));
 
   return {
     price: Number(basePrice.toFixed(2)),
-    subsidyRate,
+    subsidyRate: Number(subsidyRate.toFixed(4)),
+    subsidyAmount: Number(subsidyAmount.toFixed(2)),
     finalPayable: Number(finalPayable.toFixed(2)),
   };
 }
@@ -256,7 +258,7 @@ export async function registerRoutes(
       }
 
       const n8nUrl =
-        "https://blablabla233.app.n8n.cloud/webhook/process-id-card";
+        "https://tok17.app.n8n.cloud/webhook/process-id-card";
 
       const formData = new FormData();
 
@@ -283,22 +285,26 @@ export async function registerRoutes(
 
       console.log("[ID Extraction] n8n response:", n8nRes.data);
 
-      // Handle n8n response format: [{"success": true, "data": {...}}]
-      if (!Array.isArray(n8nRes.data) || n8nRes.data.length === 0) {
-        return res.status(400).json({
-          message: "Could not extract ID data",
-        });
+      // Resilient parsing: n8n may return an array, an object, or a plain string.
+      const raw = n8nRes.data;
+
+      if (typeof raw === "string") {
+        console.warn("[ID Extraction] n8n returned a plain string:", raw);
+        return res.status(400).json({ message: "Could not extract ID data" });
       }
 
-      const result = n8nRes.data[0];
-      
-      if (!result.success || !result.data) {
-        return res.status(400).json({
-          message: "Could not extract ID data",
-        });
+      // Normalise: unwrap array → first element
+      const item = Array.isArray(raw) ? raw[0] : raw;
+      if (!item || typeof item !== "object") {
+        return res.status(400).json({ message: "Could not extract ID data" });
       }
 
-      const extracted = result.data;
+      // The data may be nested under .data or at the top level
+      const extracted = item.data && typeof item.data === "object" ? item.data : item;
+
+      if (item.success === false) {
+        return res.status(400).json({ message: extracted?.error || "Could not extract ID data" });
+      }
 
       // Validate required fields in the extracted data
       // n8n returns: name, surname, personalId (not firstName, lastName)
@@ -339,7 +345,7 @@ export async function registerRoutes(
       }
 
       console.log("[Receipt Verification] Sending to n8n via axios...");
-      const n8nUrl = "https://blablabla233.app.n8n.cloud/webhook-test/qvitari";
+      const n8nUrl = "https://tok17.app.n8n.cloud/webhook/qvitari";
       
       const base64String = image.includes(',') ? image.split(',')[1] : image;
       const buffer = Buffer.from(base64String, "base64");
@@ -357,11 +363,18 @@ export async function registerRoutes(
       });
 
       console.log("[Receipt Verification] n8n result:", n8nRes.data);
-      res.json(n8nRes.data);
+
+      if (typeof n8nRes.data === "string") {
+        console.warn("[Receipt Verification] n8n returned a plain string:", n8nRes.data);
+        return res.status(400).json({ message: "n8n returned a non-JSON response" });
+      }
+
+      const data = Array.isArray(n8nRes.data) ? n8nRes.data[0] : n8nRes.data;
+      res.json(data);
     } catch (err: any) {
       console.error("[Receipt Verification] Error:", err);
       const message = err.response?.data || err.message;
-      res.status(500).json({ message });
+      res.status(500).json({ message: typeof message === "string" ? message : JSON.stringify(message) });
     }
   });
 
@@ -374,7 +387,7 @@ export async function registerRoutes(
       }
 
       console.log("[Oven Verification] Sending to n8n (gumeliskodi)...", code);
-      const n8nUrl = "https://blablabla233.app.n8n.cloud/webhook-test/gumeliskodi";
+      const n8nUrl = "https://tok17.app.n8n.cloud/webhook-test/gumeliskodi";
 
       const n8nRes = await axios.post(n8nUrl, { oven_code: code }, {
         headers: {
@@ -385,8 +398,13 @@ export async function registerRoutes(
 
       console.log("[n8n Response]", n8nRes.data);
 
-      // Return the exact JSON response to the frontend
-      return res.json(n8nRes.data);
+      if (typeof n8nRes.data === "string") {
+        console.warn("[Oven Verification] n8n returned a plain string:", n8nRes.data);
+        return res.status(400).json({ message: "n8n returned a non-JSON response" });
+      }
+
+      const data = Array.isArray(n8nRes.data) ? n8nRes.data[0] : n8nRes.data;
+      return res.json(data);
     } catch (err) {
       console.error("[Oven Verification] Detailed Error:", {
         message: (err as Error).message,
@@ -394,7 +412,7 @@ export async function registerRoutes(
         status: (err as any).response?.status
       });
       const message = (err as any).response?.data || (err as Error).message;
-      res.status(500).json({ message });
+      res.status(500).json({ message: typeof message === "string" ? message : JSON.stringify(message) });
     }
   });
 
@@ -411,7 +429,7 @@ export async function registerRoutes(
       }
 
       console.log("[Social Card Verification] Sending to n8n via axios...");
-      const n8nUrl = "https://blablabla233.app.n8n.cloud/webhook/socialuri-id-card";
+      const n8nUrl = "https://tok17.app.n8n.cloud/webhook-test/socialuri-id-card";
       
       const base64String = image.includes(',') ? image.split(',')[1] : image;
       const buffer = Buffer.from(base64String, "base64");
@@ -429,6 +447,11 @@ export async function registerRoutes(
       });
 
       console.log("[Social Card Verification] n8n result:", n8nRes.data);
+
+      if (typeof n8nRes.data === "string") {
+        console.warn("[Social Card Verification] n8n returned a plain string:", n8nRes.data);
+        return res.status(400).json({ message: "n8n returned a non-JSON response" });
+      }
 
       const n8nData = n8nRes.data;
       // If n8n returns an array, unwrap first element
@@ -474,7 +497,7 @@ export async function registerRoutes(
       }
 
       console.log("[Pensioner Document Verification] Sending to n8n via axios...");
-      const n8nUrl = "https://blablabla233.app.n8n.cloud/webhook/process-document";
+      const n8nUrl = "https://tok17.app.n8n.cloud/webhook/process-document";
       
       const base64String = image.includes(',') ? image.split(',')[1] : image;
       const buffer = Buffer.from(base64String, "base64");
@@ -492,11 +515,29 @@ export async function registerRoutes(
       });
 
       console.log("[Pensioner Document Verification] n8n result:", n8nRes.data);
-      res.json(n8nRes.data);
+
+      if (typeof n8nRes.data === "string") {
+        console.warn("[Pensioner Document Verification] n8n returned a plain string:", n8nRes.data);
+        return res.status(400).json({ message: "n8n returned a non-JSON response" });
+      }
+
+      const raw = n8nRes.data;
+      const item = Array.isArray(raw) ? raw[0] : raw;
+
+      if (!item || typeof item !== "object") {
+        return res.status(400).json({ message: "პენსიონერის დოკუმენტის გადამოწმება ვერ მოხერხდა" });
+      }
+
+      res.json({
+        success: item.success ?? false,
+        firstName: item.firstName ?? null,
+        lastName: item.lastName ?? null,
+        personalId: item.personalId ?? null,
+      });
     } catch (err: any) {
       console.error("[Pensioner Document Verification] Error:", err);
       const message = err.response?.data || err.message;
-      res.status(500).json({ message });
+      res.status(500).json({ message: typeof message === "string" ? message : JSON.stringify(message) });
     }
   });
 
@@ -509,7 +550,7 @@ export async function registerRoutes(
     try {
       const input = submissionSchema.parse(req.body);
       
-      const n8nWebhookUrl = "https://blablabla233.app.n8n.cloud/webhook/process-document";
+      const n8nWebhookUrl = "https://tok17.app.n8n.cloud/webhook/process-document";
       
       const response = await fetch(n8nWebhookUrl, {
         method: "POST",
@@ -535,9 +576,13 @@ export async function registerRoutes(
     }
   });
 
-  // Workspace submission — dealer JWT auth, tags dealer_id
+  // Workspace submission — dealer JWT auth (cookie or Bearer), tags dealer_id
   app.post("/api/workspace/submit", async (req: Request, res: Response) => {
-    const token = req.headers.authorization?.split(" ")[1];
+    const bearerToken = req.headers.authorization?.split(" ")[1];
+    const token =
+      (bearerToken && bearerToken !== "null" && bearerToken !== "undefined" ? bearerToken : undefined)
+      || req.cookies?.dealer_token
+      || req.cookies?.auth_token;
     if (!token) return res.status(401).json({ message: "Not authenticated" });
 
     let dealerId: number;
@@ -553,6 +598,10 @@ export async function registerRoutes(
 
     try {
       const input = submissionSchema.parse(req.body);
+
+      // Authoritative dealer name from DB — cannot be tampered with by the frontend
+      const dealerRecord = await storage.getDealerById(dealerId);
+      const dealerName = dealerRecord?.name || input.supplierName || "";
 
       const allProducts = await storage.getProducts(dealerId);
       const selectedProduct = allProducts.find(
@@ -576,11 +625,13 @@ export async function registerRoutes(
             finalPayable: input.finalPayable,
           };
 
-      const n8nWebhookUrl = "https://blablabla233.app.n8n.cloud/webhook/process-document";
+      const n8nWebhookUrl = "https://tok17.app.n8n.cloud/webhook/process-document";
 
       const payload = {
         ...input,
         ...pricing,
+        supplierName: dealerName,
+        dealerName,
         deliveryFee,
         ironPlusFee,
         dealer_id: dealerId,

@@ -73,7 +73,7 @@ export function useDealerAuth() {
       .finally(() => {
         setIsDealer(false);
         setDealer(null);
-        window.location.href = "http://localhost:5000/login";
+        window.location.href = "/login";
       });
   };
 
