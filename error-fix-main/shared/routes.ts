@@ -21,16 +21,17 @@ export const submissionSchema = z.object({
   firstName: z.string(),
   lastName: z.string(),
   idNumber: z.string(),
-  gender: z.string(),
+  gender: z.string().default(""),
   expiryDate: z.string(),
   phone: z.string(),
-  region: z.string().optional(),
-  municipality: z.string().optional(),
-  city: z.string().optional(),
-  sociallyVulnerable: z.boolean(),
+  legalAddress: z.string().default(""),
+  region: z.string().default(""),
+  municipality: z.string().default(""),
+  city: z.string().default(""),
+  sociallyVulnerable: z.boolean().default(false),
   socialExtract: z.string().optional(), // base64
-  nomadic: z.boolean(),
-  pensioner: z.boolean(),
+  nomadic: z.boolean().default(false),
+  pensioner: z.boolean().default(false),
   pensionerCertificate: z.string().optional(), // base64
   supplierName: z.string(),
   supplierId: z.string(),
@@ -44,7 +45,7 @@ export const submissionSchema = z.object({
   finalPayable: z.number(),
   installationAddress: z.string(),
   receiptPhoto: z.string(), // base64
-  digitalConsent: z.boolean(),
+  digitalConsent: z.boolean().default(false),
 });
 
 export const api = {

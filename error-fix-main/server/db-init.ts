@@ -31,6 +31,7 @@ export async function ensureDbBasics() {
       id SERIAL PRIMARY KEY,
       key TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
+      identification_code TEXT NOT NULL DEFAULT '000000000',
       email TEXT UNIQUE,
       password TEXT,
       created_at TIMESTAMP DEFAULT NOW()
@@ -41,6 +42,9 @@ export async function ensureDbBasics() {
   await dbPool.query(`
     DO $$
     BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='identification_code') THEN
+        ALTER TABLE dealers ADD COLUMN identification_code TEXT NOT NULL DEFAULT '000000000';
+      END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dealers' AND column_name='email') THEN
         ALTER TABLE dealers ADD COLUMN email TEXT UNIQUE;
       END IF;
@@ -126,17 +130,17 @@ export async function ensureDbBasics() {
   console.log("[db] Seeding legacy dealers with password: Dealer123#");
 
   await dbPool.query(
-    `INSERT INTO dealers (key, name, email, password)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (key) DO UPDATE SET email = EXCLUDED.email, password = EXCLUDED.password`,
-    ["iron", "Iron+", "demo@example.com", defaultDealerPassword],
+    `INSERT INTO dealers (key, name, identification_code, email, password)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (key) DO UPDATE SET identification_code = EXCLUDED.identification_code, email = EXCLUDED.email, password = EXCLUDED.password`,
+    ["iron", "Iron+", "000000000", "demo@example.com", defaultDealerPassword],
   );
 
   await dbPool.query(
-    `INSERT INTO dealers (key, name, email, password)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (key) DO UPDATE SET email = EXCLUDED.email, password = EXCLUDED.password`,
-    ["gorgia", "Gorgia", "info@gorgia.ge", defaultDealerPassword],
+    `INSERT INTO dealers (key, name, identification_code, email, password)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (key) DO UPDATE SET identification_code = EXCLUDED.identification_code, email = EXCLUDED.email, password = EXCLUDED.password`,
+    ["gorgia", "Gorgia", "000000000", "info@gorgia.ge", defaultDealerPassword],
   );
 
   // Seed default products only if the products table is empty

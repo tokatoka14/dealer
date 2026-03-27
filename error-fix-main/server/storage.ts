@@ -30,7 +30,7 @@ export interface IStorage {
   getAllDealers(): Promise<Dealer[]>;
   getDealerById(id: number): Promise<Dealer | undefined>;
   getDealerByEmail(email: string): Promise<Dealer | undefined>;
-  createDealer(dealer: { key: string; name: string; email: string; password: string }): Promise<Dealer>;
+  createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string }): Promise<Dealer>;
   updateDealer(id: number, update: Partial<Dealer>): Promise<Dealer>;
   deleteDealerCascade(id: number): Promise<void>;
 
@@ -95,7 +95,7 @@ export class DatabaseStorage implements IStorage {
     return dealer;
   }
 
-  async createDealer(dealer: { key: string; name: string; email: string; password: string }): Promise<Dealer> {
+  async createDealer(dealer: { key: string; name: string; identificationCode: string; email: string; password: string }): Promise<Dealer> {
     const [created] = await db.insert(dealers).values(dealer).returning();
     return created;
   }

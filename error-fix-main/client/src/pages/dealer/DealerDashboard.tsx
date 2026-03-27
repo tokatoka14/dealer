@@ -36,6 +36,7 @@ export default function DealerDashboard() {
   const handleSubmit = async () => {
     if (!dealer) return;
     setIsSubmitting(true);
+    console.log("[Submit] Full form payload:", formData);
     try {
       const res = await fetch("/api/workspace/submit", {
         method: "POST",

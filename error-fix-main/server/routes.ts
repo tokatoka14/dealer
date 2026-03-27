@@ -362,15 +362,32 @@ export async function registerRoutes(
         headers: formData.getHeaders(),
       });
 
-      console.log("[Receipt Verification] n8n result:", n8nRes.data);
+      console.log("[Receipt Verification] n8n raw result:", JSON.stringify(n8nRes.data));
 
       if (typeof n8nRes.data === "string") {
         console.warn("[Receipt Verification] n8n returned a plain string:", n8nRes.data);
         return res.status(400).json({ message: "n8n returned a non-JSON response" });
       }
 
-      const data = Array.isArray(n8nRes.data) ? n8nRes.data[0] : n8nRes.data;
-      res.json(data);
+      // Unwrap: array → first element, then check .data nesting
+      const raw = n8nRes.data;
+      let item = Array.isArray(raw) ? raw[0] : raw;
+      if (!item || typeof item !== "object") {
+        return res.status(400).json({ message: "ქვითრის გადამოწმება ვერ მოხერხდა" });
+      }
+      // Some n8n nodes nest under .data
+      if (item.data && typeof item.data === "object" && !item.total_amount && !item.amount) {
+        item = item.data;
+      }
+
+      // Extract the amount — try common field names
+      const totalAmount = item.total_amount ?? item.totalAmount ?? item.amount ?? item.price ?? null;
+      console.log("[Receipt Verification] Extracted total_amount:", totalAmount, "from item keys:", Object.keys(item));
+
+      res.json({
+        total_amount: totalAmount !== null && totalAmount !== undefined ? Number(totalAmount) : null,
+        currency: item.currency || "GEL",
+      });
     } catch (err: any) {
       console.error("[Receipt Verification] Error:", err);
       const message = err.response?.data || err.message;
@@ -602,6 +619,7 @@ export async function registerRoutes(
       // Authoritative dealer name from DB — cannot be tampered with by the frontend
       const dealerRecord = await storage.getDealerById(dealerId);
       const dealerName = dealerRecord?.name || input.supplierName || "";
+      const dealerIdentificationCode = (dealerRecord as any)?.identificationCode || "";
 
       const allProducts = await storage.getProducts(dealerId);
       const selectedProduct = allProducts.find(
@@ -625,10 +643,23 @@ export async function registerRoutes(
             finalPayable: input.finalPayable,
           };
 
-      const n8nWebhookUrl = "https://tok17.app.n8n.cloud/webhook/process-document";
+      // Map gender code to Georgian
+      const genderMap: Record<string, string> = { M: "მამრობითი", F: "მდედრობითი", m: "მამრობითი", f: "მდედრობითი" };
+      const genderGeo = genderMap[input.gender] || input.gender || "NONE";
+
+      // Derived fields
+      const legalAddress = input.legalAddress || "NONE";
+      const productName = selectedProduct?.name || input.model || "NONE";
+      const serialNumber = selectedProduct?.id?.toString() || input.supplierId || "NONE";
+      const totalPriceRaw = selectedProduct ? (selectedProduct.price / 100) : input.price;
+      const userCopayment = pricing.finalPayable;
+      const fullName = `${input.firstName} ${input.lastName}`;
+      const installationAddressFull = [input.region, input.municipality, input.city, input.installationAddress].filter(Boolean).join(", ") || "NONE";
 
       const payload = {
+        // Raw form data + server-calculated pricing
         ...input,
+        gender: genderGeo,
         ...pricing,
         supplierName: dealerName,
         dealerName,
@@ -636,25 +667,127 @@ export async function registerRoutes(
         ironPlusFee,
         dealer_id: dealerId,
         dealer_key: dealerKey,
+        dealer_identification_code: dealerIdentificationCode,
+
+        // Product Details
+        product_name: productName,
+        serial_number: serialNumber,
+        dealer_name: dealerName,
+        total_price_raw: totalPriceRaw,
+
+        // Financials
+        user_copayment: userCopayment,
+
+        // Legal & Installation Address
+        legal_address: legalAddress,
+        region: input.region || "NONE",
+        municipality: input.municipality || "NONE",
+        city_village: input.city || "NONE",
+        installation_address: installationAddressFull,
+
+        // Verification Context
+        personalId: input.idNumber,
+        fullName,
+
+        // 1. ზოგადი ინფორმაცია პოტენციური ბენეფიციარის შესახებ
+        "1.1_სახელი_და_გვარი": fullName,
+        "1.2_პირადი_ნომერი": input.idNumber,
+        "1.3_მობილურის_ნომერი": input.phone,
+        "1.4_დამატებითი_ტელეფონი": "NONE",
+        "1.5_ელ_ფოსტა": "NONE",
+        "1.6_სქესი": genderGeo,
+        "1.7_იურიდიული_მისამართი": legalAddress,
+        "1.7.1_რეგიონი": input.region || "NONE",
+        "1.7.2_მუნიციპალიტეტი": input.municipality || "NONE",
+        "1.7.3_ქალაქი_სოფელი": input.city || "NONE",
+        "1.8_სოციალურად_დაუცველი": input.sociallyVulnerable ? "კი" : "არა",
+        "1.9_მომთაბარე": input.nomadic ? "კი" : "არა",
+        "1.10_დამატებითი_ინფორმაცია": "NONE",
       };
-      console.log("[Workspace Submit] dealer_id:", dealerId, "dealer_key:", dealerKey);
 
-      const response = await fetch(n8nWebhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // Log payload (skip huge base64 strings)
+      const logSafe = Object.fromEntries(
+        Object.entries(payload).map(([k, v]) => [k, typeof v === "string" && (v as string).length > 500 ? `[base64 ${(v as string).length} chars]` : v])
+      );
+      console.log("Final Submission Payload:", JSON.stringify(logSafe, null, 2));
 
-      if (!response.ok) {
-        throw new Error("Failed to submit to n8n");
-      }
-
+      // Respond immediately — send webhook in background
       res.status(200).json({ success: true });
+
+      const finalWebhookUrl = "https://tok17.app.n8n.cloud/webhook-test/DONE";
+      const imageKeys = ["idFront", "idBack", "socialExtract", "pensionerCertificate", "receiptPhoto"] as const;
+
+      const toBinary = async (value: unknown): Promise<{ buffer: Buffer; contentType: string; filename: string } | null> => {
+        if (!value || typeof value !== "string") return null;
+        const s = value.trim();
+        if (!s) return null;
+
+        if (s.startsWith("data:")) {
+          const m = s.match(/^data:([^;]+);base64,(.*)$/);
+          if (!m) return null;
+          const contentType = m[1] || "application/octet-stream";
+          const b64 = m[2] || "";
+          const buffer = Buffer.from(b64, "base64");
+          const ext = contentType.includes("png") ? "png" : contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : "bin";
+          return { buffer, contentType, filename: `image.${ext}` };
+        }
+
+        if (/^https?:\/\//i.test(s)) {
+          const r = await fetch(s);
+          if (!r.ok) throw new Error(`Failed to fetch image URL (${r.status})`);
+          const ab = await r.arrayBuffer();
+          const buffer = Buffer.from(ab);
+          const contentType = r.headers.get("content-type") || "application/octet-stream";
+          const urlName = (() => {
+            try {
+              const u = new URL(s);
+              const last = u.pathname.split("/").filter(Boolean).pop();
+              return last || "image";
+            } catch {
+              return "image";
+            }
+          })();
+          const hasExt = /\.[a-z0-9]{2,5}$/i.test(urlName);
+          const ext = contentType.includes("png") ? "png" : contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : "bin";
+          const filename = hasExt ? urlName : `${urlName}.${ext}`;
+          return { buffer, contentType, filename };
+        }
+
+        return null;
+      };
+
+      (async () => {
+        const meta: any = { ...payload };
+        const fd = new FormData();
+        const attached: Array<{ key: string; bytes: number; filename: string; contentType: string }> = [];
+
+        for (const k of imageKeys) {
+          const bin = await toBinary((payload as any)[k]);
+          if (!bin) continue;
+          delete meta[k];
+          meta[`${k}_filename`] = bin.filename;
+          meta[`${k}_contentType`] = bin.contentType;
+          fd.append(k, bin.buffer, { filename: bin.filename, contentType: bin.contentType });
+          attached.push({ key: k, bytes: bin.buffer.length, filename: bin.filename, contentType: bin.contentType });
+        }
+
+        fd.append("payload", JSON.stringify(meta));
+
+        const n8nRes = await axios.post(finalWebhookUrl, fd, {
+          headers: fd.getHeaders(),
+          maxBodyLength: Infinity,
+        });
+
+        console.log("[Workspace Submit] n8n responded:", n8nRes.status, { attached });
+      })().catch((e) => console.error("[Workspace Submit] n8n error:", e.message));
     } catch (err) {
       if (err instanceof z.ZodError) {
+        const firstErr = err.errors[0];
+        const field = firstErr.path.join(".");
+        console.error("[Workspace Submit] Zod validation errors:", err.errors.map(e => `${e.path.join(".")}: ${e.message}`));
         return res.status(400).json({
-          message: err.errors[0].message,
-          field: err.errors[0].path.join("."),
+          message: `${field}: ${firstErr.message}`,
+          field,
         });
       }
       res.status(500).json({ message: (err as Error).message });
@@ -759,9 +892,14 @@ export async function registerRoutes(
 
   app.post("/api/admin/dealers", authenticateAdmin, async (req: Request, res: Response) => {
     try {
-      const { name, email, password: rawPassword } = req.body;
-      if (!name || !email || !rawPassword) {
-        return res.status(400).json({ message: "Name, email, and password are required" });
+      const { name, email, password: rawPassword, identificationCode } = req.body;
+      if (!name || !email || !rawPassword || !identificationCode) {
+        return res.status(400).json({ message: "Name, identification code, email, and password are required" });
+      }
+
+      const idCodeStr = String(identificationCode).trim();
+      if (!/^(\d{9}|\d{11})$/.test(idCodeStr)) {
+        return res.status(400).json({ message: "Identification code must be 9 or 11 digits" });
       }
 
       const existing = await storage.getDealerByEmail(email);
@@ -772,7 +910,13 @@ export async function registerRoutes(
       const key = name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
       const hashedPassword = bcrypt.hashSync(rawPassword, 10);
 
-      const dealer = await storage.createDealer({ key, name, email, password: hashedPassword });
+      const dealer = await storage.createDealer({
+        key,
+        name,
+        identificationCode: idCodeStr,
+        email,
+        password: hashedPassword,
+      });
       
       // Note: Webhook configuration is hardcoded in DEFAULT_WEBHOOKS constant
       // and should be used by frontend when making requests to vision endpoints
@@ -791,9 +935,16 @@ export async function registerRoutes(
   app.patch("/api/admin/dealers/:id", authenticateAdmin, async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-      const { name, email, password: rawPassword } = req.body;
+      const { name, email, password: rawPassword, identificationCode } = req.body;
       const update: any = {};
       if (name) update.name = name;
+      if (identificationCode !== undefined) {
+        const idCodeStr = String(identificationCode).trim();
+        if (!/^(\d{9}|\d{11})$/.test(idCodeStr)) {
+          return res.status(400).json({ message: "Identification code must be 9 or 11 digits" });
+        }
+        update.identificationCode = idCodeStr;
+      }
       if (email) update.email = email;
       if (rawPassword) update.password = bcrypt.hashSync(rawPassword, 10);
 

@@ -32,6 +32,7 @@ export default function AdminDashboard() {
     id: number;
     key: string;
     name: string;
+    identificationCode?: string | null;
     email: string | null;
     createdAt: string | null;
   }
@@ -39,11 +40,11 @@ export default function AdminDashboard() {
   const [isDealersLoading, setIsDealersLoading] = useState(false);
   const [isAddDealerOpen, setIsAddDealerOpen] = useState(false);
   const [isAddingDealer, setIsAddingDealer] = useState(false);
-  const [newDealer, setNewDealer] = useState({ name: "", email: "", password: "" });
+  const [newDealer, setNewDealer] = useState({ name: "", identificationCode: "", email: "", password: "" });
   const [showNewDealerPassword, setShowNewDealerPassword] = useState(false);
 
   const [editingDealer, setEditingDealer] = useState<DealerRecord | null>(null);
-  const [editDealerForm, setEditDealerForm] = useState({ name: "", email: "", password: "" });
+  const [editDealerForm, setEditDealerForm] = useState({ name: "", identificationCode: "", email: "", password: "" });
   const [showEditPassword, setShowEditPassword] = useState(false);
 
   // New Product Form State
@@ -126,7 +127,7 @@ export default function AdminDashboard() {
         throw new Error(err.message || "Failed to add");
       }
       toast({ title: "წარმატებით", description: "დილერი წარმატებით დაემატა" });
-      setNewDealer({ name: "", email: "", password: "" });
+      setNewDealer({ name: "", identificationCode: "", email: "", password: "" });
       setIsAddDealerOpen(false);
       fetchDealers();
     } catch (err) {
@@ -141,6 +142,7 @@ export default function AdminDashboard() {
     try {
       const body: any = {};
       if (editDealerForm.name) body.name = editDealerForm.name;
+      if (editDealerForm.identificationCode) body.identificationCode = editDealerForm.identificationCode;
       if (editDealerForm.email) body.email = editDealerForm.email;
       if (editDealerForm.password) body.password = editDealerForm.password;
 
@@ -567,6 +569,17 @@ export default function AdminDashboard() {
                       />
                     </div>
                     <div className="space-y-2">
+                      <Label>საიდენტიფიკაციო კოდი (ს/კ)</Label>
+                      <Input
+                        value={newDealer.identificationCode}
+                        onChange={(e) => setNewDealer({ ...newDealer, identificationCode: e.target.value })}
+                        placeholder="9 ან 11 ციფრი"
+                        required
+                        inputMode="numeric"
+                        className="h-11 rounded-xl"
+                      />
+                    </div>
+                    <div className="space-y-2">
                       <Label>ელ-ფოსტა</Label>
                       <Input
                         type="email"
@@ -616,6 +629,7 @@ export default function AdminDashboard() {
                       <TableHead className="pl-6">ID</TableHead>
                       <TableHead>სახელი</TableHead>
                       <TableHead>Key</TableHead>
+                      <TableHead>ს/კ</TableHead>
                       <TableHead>ელ-ფოსტა</TableHead>
                       <TableHead>შეიქმნა</TableHead>
                       <TableHead className="pr-6 text-right">ქმედებები</TableHead>
@@ -629,6 +643,7 @@ export default function AdminDashboard() {
                         <TableCell>
                           <span className="px-2 py-1 bg-muted rounded-lg text-xs font-mono">{d.key}</span>
                         </TableCell>
+                        <TableCell className="font-mono text-xs">{d.identificationCode || "—"}</TableCell>
                         <TableCell className="text-sm">{d.email || "—"}</TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {d.createdAt ? new Date(d.createdAt).toLocaleDateString("ka-GE") : "—"}
@@ -640,7 +655,7 @@ export default function AdminDashboard() {
                               variant="ghost"
                               onClick={() => {
                                 setEditingDealer(d);
-                                setEditDealerForm({ name: d.name, email: d.email || "", password: "" });
+                                setEditDealerForm({ name: d.name, identificationCode: String(d.identificationCode || ""), email: d.email || "", password: "" });
                                 setShowEditPassword(false);
                               }}
                               className="h-8 w-8 rounded-lg"
@@ -684,6 +699,16 @@ export default function AdminDashboard() {
                     <Input
                       value={editDealerForm.name}
                       onChange={(e) => setEditDealerForm({ ...editDealerForm, name: e.target.value })}
+                      className="h-11 rounded-xl"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>საიდენტიფიკაციო კოდი (ს/კ)</Label>
+                    <Input
+                      value={editDealerForm.identificationCode}
+                      onChange={(e) => setEditDealerForm({ ...editDealerForm, identificationCode: e.target.value })}
+                      placeholder="9 ან 11 ციფრი"
+                      inputMode="numeric"
                       className="h-11 rounded-xl"
                     />
                   </div>

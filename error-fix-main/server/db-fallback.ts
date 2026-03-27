@@ -27,9 +27,17 @@ export class FallbackDB {
     }
     
     if (text.includes('INSERT INTO dealers')) {
-      const [key, name] = params || [];
-      this.dealers.set(key, { id: this.dealers.size + 1, key, name });
-      return { rows: [{ id: this.dealers.size, key, name }] };
+      const [key, name, identificationCode, email, password] = params || [];
+      const record = {
+        id: this.dealers.size + 1,
+        key,
+        name,
+        identification_code: identificationCode,
+        email,
+        password,
+      };
+      this.dealers.set(key, record);
+      return { rows: [record] };
     }
     
     if (text.includes('INSERT INTO products')) {

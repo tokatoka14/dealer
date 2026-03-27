@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { type SubmissionInput } from "@shared/routes";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { fileToBase64, cn } from "@/lib/utils";
@@ -23,12 +24,14 @@ export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting
 
   const [errors, setErrors] = useState<Record<string, boolean>>({});
   const fieldRefs = {
+    legalAddress: useRef<HTMLDivElement>(null),
+    region: useRef<HTMLDivElement>(null),
+    municipality: useRef<HTMLDivElement>(null),
+    cityVillage: useRef<HTMLDivElement>(null),
     installationAddress: useRef<HTMLDivElement>(null),
     receiptPhoto: useRef<HTMLDivElement>(null),
     digitalConsent: useRef<HTMLDivElement>(null),
   };
-
-  const EXPECTED_AMOUNT = 320.00;
 
   const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -63,43 +66,39 @@ export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting
 
       const result = await res.json();
       console.log("[Receipt Verification] JSON Result:", result);
-      
-      let amount: any = undefined;
 
-      // 1. Check top level or data level
-      amount = result?.total_amount ?? result?.data?.total_amount ?? result?.[0]?.total_amount ?? result?.[0]?.data?.total_amount;
+      // Backend now returns a clean { total_amount: number | null }
+      const rawAmount = result?.total_amount;
 
-      // 2. Handle Gemini 'parts' structure: data.content.parts[0].text
-      if (amount === undefined) {
-        const partsText = result?.data?.content?.parts?.[0]?.text ?? result?.content?.parts?.[0]?.text;
-        if (partsText) {
-          try {
-            // The text might be a JSON string like '{"total_amount": 320}' or just contain the number
-            const cleanedText = partsText.replace(/```json|```/g, "").trim();
-            const parsedParts = JSON.parse(cleanedText);
-            amount = parsedParts?.total_amount ?? parsedParts?.amount;
-          } catch (e) {
-            // Fallback: try to extract number with regex if JSON parse fails
-            const match = partsText.match(/(\d+(\.\d+)?)/);
-            if (match) amount = match[0];
-          }
-        }
-      }
-
-      if (amount !== undefined) {
-        const parsedAmount = parseFloat(String(amount));
-        const isMatch = Math.abs(parsedAmount - EXPECTED_AMOUNT) < 0.01;
-        setVerificationResult({
-          success: isMatch,
-          amount: parsedAmount,
-          message: isMatch 
-            ? "✅ სწორია" 
-            : "❌ მონაცემები არ ემთხვევა"
-        });
-      } else {
-        console.warn("[Receipt Verification] Could not find total_amount in result keys:", Object.keys(result));
+      if (rawAmount === null || rawAmount === undefined) {
+        console.warn("[Receipt Verification] total_amount is missing. Result keys:", Object.keys(result));
         throw new Error("Could not extract amount from response");
       }
+
+      // Force numeric — strip any accidental currency text, then parse
+      const receiptPrice = Number(
+        String(rawAmount).replace(/[^0-9.\-]/g, "").trim()
+      );
+      const finalPrice = Number(Number(data.finalPayable ?? 0).toFixed(2));
+
+      console.log("[Receipt Verification] Comparison:", {
+        receipt: receiptPrice,
+        system: finalPrice,
+        rawFromServer: rawAmount,
+      });
+
+      if (isNaN(receiptPrice)) {
+        throw new Error("Could not parse receipt amount: " + String(rawAmount));
+      }
+
+      const isMatch = Math.abs(receiptPrice - finalPrice) < 0.01;
+      setVerificationResult({
+        success: isMatch,
+        amount: receiptPrice,
+        message: isMatch
+          ? "✅ მონაცემები დაემთხვა"
+          : `❌ მონაცემები არ ემთხვევა (ქვითარი: ${receiptPrice.toFixed(2)} GEL, სისტემა: ${finalPrice.toFixed(2)} GEL)`,
+      });
     } catch (err) {
       console.error("[Receipt Verification] Catch Block:", err);
       setVerificationResult({
@@ -113,6 +112,10 @@ export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting
 
   const handleFinish = () => {
     const newErrors: Record<string, boolean> = {};
+    if (!data.legalAddress) newErrors.legalAddress = true;
+    if (!data.region) newErrors.region = true;
+    if (!data.municipality) newErrors.municipality = true;
+    if (!data.city) newErrors.cityVillage = true;
     if (!data.installationAddress) newErrors.installationAddress = true;
     if (!data.receiptPhoto) newErrors.receiptPhoto = true;
     if (!data.digitalConsent) newErrors.digitalConsent = true;
@@ -310,6 +313,71 @@ export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting
                 ვადასტურებ, რომ მიწოდებული ინფორმაცია და თანდართული დოკუმენტები არის სწორი და სანდო. ვეთანხმები სუბსიდირების პროგრამის პირობებს.
               </p>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* მისამართის ინფორმაცია */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
+          <MapPin className="w-5 h-5 text-primary" /> მისამართის ინფორმაცია
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2" ref={fieldRefs.legalAddress}>
+            <Label className={cn("text-sm font-semibold", errors.legalAddress && "text-destructive")}>
+              იურიდიული მისამართი *
+            </Label>
+            <Input
+              placeholder="მაგ: კეკელიძის 40"
+              value={data.legalAddress || ""}
+              onChange={(e) => {
+                updateData({ legalAddress: e.target.value });
+                setErrors(prev => ({ ...prev, legalAddress: false }));
+              }}
+              className={cn("h-11 rounded-xl", errors.legalAddress && "border-destructive bg-destructive/5")}
+            />
+          </div>
+          <div className="space-y-2" ref={fieldRefs.region}>
+            <Label className={cn("text-sm font-semibold", errors.region && "text-destructive")}>
+              რეგიონი *
+            </Label>
+            <Input
+              placeholder="მაგ: თბილისი"
+              value={data.region || ""}
+              onChange={(e) => {
+                updateData({ region: e.target.value });
+                setErrors(prev => ({ ...prev, region: false }));
+              }}
+              className={cn("h-11 rounded-xl", errors.region && "border-destructive bg-destructive/5")}
+            />
+          </div>
+          <div className="space-y-2" ref={fieldRefs.municipality}>
+            <Label className={cn("text-sm font-semibold", errors.municipality && "text-destructive")}>
+              მუნიციპალიტეტი *
+            </Label>
+            <Input
+              placeholder="მაგ: თბილისი"
+              value={data.municipality || ""}
+              onChange={(e) => {
+                updateData({ municipality: e.target.value });
+                setErrors(prev => ({ ...prev, municipality: false }));
+              }}
+              className={cn("h-11 rounded-xl", errors.municipality && "border-destructive bg-destructive/5")}
+            />
+          </div>
+          <div className="space-y-2" ref={fieldRefs.cityVillage}>
+            <Label className={cn("text-sm font-semibold", errors.cityVillage && "text-destructive")}>
+              ქალაქი/სოფელი *
+            </Label>
+            <Input
+              placeholder="მაგ: თბილისი"
+              value={data.city || ""}
+              onChange={(e) => {
+                updateData({ city: e.target.value });
+                setErrors(prev => ({ ...prev, cityVillage: false }));
+              }}
+              className={cn("h-11 rounded-xl", errors.cityVillage && "border-destructive bg-destructive/5")}
+            />
           </div>
         </div>
       </div>

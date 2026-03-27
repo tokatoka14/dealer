@@ -12,6 +12,7 @@ export const dealers = pgTable("dealers", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
   name: text("name").notNull(),
+  identificationCode: varchar("identification_code", { length: 32 }).notNull(),
   email: text("email").unique(),
   password: text("password"),
   createdAt: timestamp("created_at").defaultNow(),
