@@ -23,6 +23,7 @@ interface Props {
 export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting, onCancelSale }: Props) {
   const { toast } = useToast();
   const [hasCaptured, setHasCaptured] = useState(!!data.receiptPhoto);
+  const [disableReceiptVerification, setDisableReceiptVerification] = useState(true);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [verificationResult, setVerificationResult] = useState<{ success: boolean; amount?: number; message?: string } | null>(null);
@@ -69,15 +70,13 @@ export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting
       const result = await res.json();
       console.log("[Receipt Verification] JSON Result:", result);
 
-      // Backend now returns a clean { total_amount: number | null }
       const rawAmount = result?.total_amount;
 
       if (rawAmount === null || rawAmount === undefined) {
-        console.warn("[Receipt Verification] total_amount is missing. Result keys:", result ? Object.keys(result) : 'no result');
+        console.warn("[Receipt Verification] total_amount is missing. Result keys:", result ? Object.keys(result) : "no result");
         throw new Error("Could not extract amount from response");
       }
 
-      // Force numeric — strip any accidental currency text, then parse
       const receiptPrice = Number(
         String(rawAmount).replace(/[^0-9.\-]/g, "").trim()
       );
@@ -105,7 +104,7 @@ export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting
       console.error("[Receipt Verification] Catch Block:", err);
       setVerificationResult({
         success: false,
-        message: "❌ ვერ მოხერხდა მონაცემების ამოკითხვა"
+        message: "❌ ვერ მოხერხდა მონაცემების ამოკითხვა",
       });
     } finally {
       setIsVerifying(false);
@@ -217,6 +216,29 @@ export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting
             <Label className={cn("text-base font-semibold flex items-center gap-2", errors.receiptPhoto && "text-destructive")}>
               <Camera className="w-4 h-4 text-primary" /> ქვითრის ფოტო *
             </Label>
+
+            <div className="bg-card border border-border rounded-2xl p-4">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  id="disableReceiptVerification"
+                  checked={disableReceiptVerification}
+                  onCheckedChange={(c) => {
+                    setDisableReceiptVerification(Boolean(c));
+                    setVerificationResult(null);
+                  }}
+                  className="mt-1"
+                />
+                <div className="grid gap-1 leading-none">
+                  <Label htmlFor="disableReceiptVerification" className="text-sm font-semibold cursor-pointer">
+                    ქვითრის დადასტურების გამორთვა
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    თუ ჩართულია, ქვითრის დადასტურება არ გამოჩნდება.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className={cn(
               "bg-muted/40 border border-border/50 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-4",
               errors.receiptPhoto && "border-destructive bg-destructive/5"
@@ -231,43 +253,47 @@ export function Step4Finalize({ data, updateData, onSubmit, onBack, isSubmitting
                   </div>
 
                   <div className="flex flex-col gap-3">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full h-12 rounded-xl gap-2 border-primary/20 hover:bg-primary/5 text-primary font-bold"
-                      onClick={handleVerifyReceipt}
-                      disabled={isVerifying}
-                    >
-                      {isVerifying ? (
-                        <>
-                          <ScanLine className="w-5 h-5 animate-pulse" />
-                          მოწმდება...
-                        </>
-                      ) : (
-                        <>
-                          <ScanLine className="w-5 h-5" />
-                          შეამოწმე ქვითარი
-                        </>
-                      )}
-                    </Button>
-
-                    <AnimatePresence>
-                      {verificationResult && (
-                        <div className={cn(
-                          "p-4 rounded-xl border flex items-center gap-3 text-left shadow-sm transition-all animate-in fade-in slide-in-from-top-2",
-                          verificationResult.success 
-                            ? "bg-green-500/10 border-green-500/20 text-green-700" 
-                            : "bg-red-500/10 border-red-500/20 text-red-600 font-bold"
-                        )}>
-                          {verificationResult.success ? (
-                            <CheckCircle2 className="w-5 h-5 shrink-0" />
+                    {!disableReceiptVerification && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full h-12 rounded-xl gap-2 border-primary/20 hover:bg-primary/5 text-primary font-bold"
+                          onClick={handleVerifyReceipt}
+                          disabled={isVerifying}
+                        >
+                          {isVerifying ? (
+                            <>
+                              <ScanLine className="w-5 h-5 animate-pulse" />
+                              მოწმდება...
+                            </>
                           ) : (
-                            <AlertCircle className="w-5 h-5 shrink-0" />
+                            <>
+                              <ScanLine className="w-5 h-5" />
+                              შეამოწმე ქვითარი
+                            </>
                           )}
-                          <span className="text-base">{verificationResult.message}</span>
-                        </div>
-                      )}
-                    </AnimatePresence>
+                        </Button>
+
+                        <AnimatePresence>
+                          {verificationResult && (
+                            <div className={cn(
+                              "p-4 rounded-xl border flex items-center gap-3 text-left shadow-sm transition-all animate-in fade-in slide-in-from-top-2",
+                              verificationResult.success
+                                ? "bg-green-500/10 border-green-500/20 text-green-700"
+                                : "bg-red-500/10 border-red-500/20 text-red-600 font-bold"
+                            )}>
+                              {verificationResult.success ? (
+                                <CheckCircle2 className="w-5 h-5 shrink-0" />
+                              ) : (
+                                <AlertCircle className="w-5 h-5 shrink-0" />
+                              )}
+                              <span className="text-base">{verificationResult.message}</span>
+                            </div>
+                          )}
+                        </AnimatePresence>
+                      </>
+                    )}
 
                     <div className="relative aspect-[4/3] rounded-xl overflow-hidden border border-border bg-black/5 mt-2">
                       <img

@@ -15,6 +15,75 @@ import axios from "axios";
 
 const N8N_WEBHOOK_URL = "https://tok18.app.n8n.cloud/webhook-test/69083b0e-989b-4fa9-a091-0bd322884e1f";
 
+const SIGNATURE_FONT_FAMILY = "DM Ambrosi UNI";
+const SIGNATURE_INK_COLOR = "#0B2E6B";
+
+function makeSignatureText(firstName: string | undefined, lastName: string | undefined): string {
+  const fn = String(firstName ?? "").trim();
+  const ln = String(lastName ?? "").trim();
+  const ln3 = ln.slice(0, 3);
+  if (!fn && !ln3) return "";
+  if (!ln3) return fn;
+  if (!fn) return ln3;
+  return `${fn}.${ln3}`;
+}
+
+async function ensureSignatureFontLoaded(fontSizePx: number): Promise<void> {
+  const anyDoc = document as any;
+  if (!anyDoc?.fonts?.load) return;
+  try {
+    await anyDoc.fonts.load(`normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`, "abcdefghijklmnopqrstuvwxyz");
+    await anyDoc.fonts.ready;
+  } catch {
+    // ignore font load errors; canvas will fall back to default font
+  }
+}
+
+async function renderSignaturePngDataUrl(text: string): Promise<string> {
+  const fontSizePx = 72;
+  const padding = 24;
+
+  await ensureSignatureFontLoaded(fontSizePx);
+
+  const measureCanvas = document.createElement("canvas");
+  const measureCtx = measureCanvas.getContext("2d");
+  if (!measureCtx) throw new Error("Canvas 2D context not available");
+
+  measureCtx.font = `normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`;
+  measureCtx.textBaseline = "alphabetic";
+  const metrics = measureCtx.measureText(text);
+
+  const ascent = Number.isFinite(metrics.actualBoundingBoxAscent)
+    ? metrics.actualBoundingBoxAscent
+    : fontSizePx * 0.8;
+  const descent = Number.isFinite(metrics.actualBoundingBoxDescent)
+    ? metrics.actualBoundingBoxDescent
+    : fontSizePx * 0.2;
+  const textWidth = Math.ceil(metrics.width);
+  const textHeight = Math.ceil(ascent + descent);
+
+  const canvasWidth = textWidth + padding * 2;
+  const canvasHeight = textHeight + padding * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, canvasWidth);
+  canvas.height = Math.max(1, canvasHeight);
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context not available");
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.font = `normal ${fontSizePx}px "${SIGNATURE_FONT_FAMILY}"`;
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = SIGNATURE_INK_COLOR;
+
+  const x = padding;
+  const y = padding + ascent;
+  ctx.fillText(text, x, y);
+
+  return canvas.toDataURL("image/png");
+}
+
 function base64ToBlob(base64: string): Blob {
   const parts = base64.split(",");
   const mimeMatch = parts[0]?.match(/:(.*?);/);
@@ -113,6 +182,12 @@ export default function DealerDashboard() {
       appendImageIfPresent(fd, "socialExtract", formData.socialExtract, "social_extract.jpg");
       appendImageIfPresent(fd, "pensionerCertificate", formData.pensionerCertificate, "pensioner_cert.jpg");
       appendImageIfPresent(fd, "receiptPhoto", formData.receiptPhoto, "receipt.jpg");
+
+      const signatureText = makeSignatureText(formData.firstName, formData.lastName);
+      if (signatureText) {
+        const signaturePng = await renderSignaturePngDataUrl(signatureText);
+        appendImageIfPresent(fd, "signature", signaturePng, "signature.png");
+      }
 
       await axios.post(N8N_WEBHOOK_URL, fd, {
         maxBodyLength: Infinity,
