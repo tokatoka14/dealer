@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const N8N_WEBHOOK_URL = "https://tok18.app.n8n.cloud/webhook-test/kodiii";
+const N8N_WEBHOOK_URL = "https://tok19.app.n8n.cloud/webhook-test/kodiii";
 
 export type N8NAction = "verify" | "cancel";
 

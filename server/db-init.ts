@@ -4,10 +4,30 @@ import bcrypt from "bcryptjs";
 export async function ensureDbBasics() {
   try {
     // Test connection first
-    await pool.query('SELECT NOW()');
-    console.log('[db] Database connection successful');
-  } catch (error) {
-    console.error('[db] Database connection failed:', error);
+    console.log('[db] Attempting to connect to PostgreSQL...');
+    const result = await pool.query('SELECT NOW()');
+    console.log('[db] Database connection successful, server time:', result.rows[0]?.now);
+  } catch (error: any) {
+    // Diagnose the most common failure modes
+    const msg = error?.message || String(error);
+    const code = error?.code;
+    if (msg.includes('connection timeout') || msg.includes('terminated due to connection timeout')) {
+      console.error('[db] CONNECTION TIMEOUT — possible causes:');
+      console.error('  1. PostgreSQL service is not running');
+      console.error('  2. Firewall / network blocking the connection');
+      console.error('  3. Remote database suspended (Neon free-tier cold start)');
+      console.error('  4. Wrong host/port in DATABASE_URL');
+    } else if (code === '3D000' || msg.includes('database') && msg.includes('does not exist')) {
+      console.error('[db] DATABASE DOES NOT EXIST — check the database name in DATABASE_URL');
+    } else if (code === '28P01' || msg.includes('authentication') || msg.includes('password')) {
+      console.error('[db] AUTHENTICATION FAILED — check username/password in DATABASE_URL');
+    } else if (msg.includes('self-signed certificate') || msg.includes('SSL') || msg.includes('ssl')) {
+      console.error('[db] SSL ERROR — check sslmode / SSL configuration for this database');
+    } else if (code === 'ECONNREFUSED') {
+      console.error('[db] CONNECTION REFUSED — PostgreSQL is not accepting connections on that host/port');
+    } else {
+      console.error('[db] Database connection failed (unclassified error):', error);
+    }
     throw error;
   }
 

@@ -24,12 +24,12 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // Default webhook configuration for new dealers/dashboards
 const DEFAULT_WEBHOOKS = {
-  identityCard: "https://tok18.app.n8n.cloud/webhook/process-id-card",
-  pensioner: "https://tok18.app.n8n.cloud/webhook/process-document",
-  socialCard: "https://tok18.app.n8n.cloud/webhook/socialuri-id-card",
-  receipt: "https://tok18.app.n8n.cloud/webhook/qvitari",
-  oven: "https://tok18.app.n8n.cloud/webhook-test/gumeliskodi",
-  submission: "https://tok18.app.n8n.cloud/webhook/process-document"
+  identityCard: "https://tok19.app.n8n.cloud/webhook/process-id-card",
+  pensioner: "https://tok19.app.n8n.cloud/webhook/process-document",
+  socialCard: "https://tok19.app.n8n.cloud/webhook/socialuri-id-card",
+  receipt: "https://tok19.app.n8n.cloud/webhook/qvitari",
+  oven: "https://tok19.app.n8n.cloud/webhook-test/kodiii",
+  submission: "https://tok19.app.n8n.cloud/webhook/process-document"
 };
 
 function authenticateAdmin(req: Request, res: Response, next: NextFunction) {
@@ -280,7 +280,7 @@ export async function registerRoutes(
       }
 
       const n8nUrl =
-        "https://tok18.app.n8n.cloud/webhook/process-id-card";
+        "https://tok19.app.n8n.cloud/webhook/process-id-card";
 
       const formData = new FormData();
 
@@ -368,7 +368,7 @@ export async function registerRoutes(
       }
 
       console.log("[Receipt Verification] Sending to n8n via axios...");
-      const n8nUrl = "https://tok18.app.n8n.cloud/webhook/qvitari";
+      const n8nUrl = "https://tok19.app.n8n.cloud/webhook/qvitari";
       
       const base64String = image.includes(',') ? image.split(',')[1] : image;
       const buffer = Buffer.from(base64String, "base64");
@@ -427,8 +427,8 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Code is required" });
       }
 
-      console.log("[Oven Verification] Sending to n8n (gumeliskodi)...", code);
-      const n8nUrl = "https://tok18.app.n8n.cloud/webhook-test/gumeliskodi";
+      console.log("[Oven Verification] Sending to n8n (kodiii)...", code);
+      const n8nUrl = "https://tok19.app.n8n.cloud/webhook-test/kodiii";
 
       const n8nRes = await axios.post(n8nUrl, { oven_code: code }, {
         headers: {
@@ -468,7 +468,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Image is required" });
       }
 
-      const n8nUrl = "https://tok18.app.n8n.cloud/webhook/socialuri-id-card";
+      const n8nUrl = "https://tok19.app.n8n.cloud/webhook/socialuri-id-card";
       const formData = new FormData();
       formData.append("data", imageFile.buffer, {
         filename: imageFile.originalname || "social-card.jpg",
@@ -555,7 +555,7 @@ export async function registerRoutes(
       console.error("[Social Card Verification] Error:", err);
       if (err.response?.status === 404) {
         console.error("[Social Card Verification] n8n Webhook is not Active:", {
-          url: "https://tok18.app.n8n.cloud/webhook/socialuri-id-card",
+          url: "https://tok19.app.n8n.cloud/webhook/socialuri-id-card",
           status: err.response?.status,
           data: err.response?.data,
         });
@@ -580,7 +580,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Image is required" });
       }
 
-      const n8nUrl = "https://tok18.app.n8n.cloud/webhook/process-document";
+      const n8nUrl = "https://tok19.app.n8n.cloud/webhook/process-document";
       
       const base64String = image.includes(',') ? image.split(',')[1] : image;
       const buffer = Buffer.from(base64String, "base64");
@@ -830,7 +830,7 @@ export async function registerRoutes(
         oven_name: ovenName,
       };
 
-      const finalWebhookUrl = "https://tok18.app.n8n.cloud/webhook-test/69083b0e-989b-4fa9-a091-0bd322884e1f";
+      const finalWebhookUrl = "https://tok19.app.n8n.cloud/webhook-test/69083b0e-989b-4fa9-a091-0bd322884e1f";
       const n8nRes = await axios.post(finalWebhookUrl, payload, {
         headers: { "Content-Type": "application/json" },
         timeout: 120000,
@@ -993,7 +993,7 @@ export async function registerRoutes(
       );
       console.log("Final Submission Payload:", JSON.stringify(logSafe, null, 2));
 
-      const finalWebhookUrl = "https://tok18.app.n8n.cloud/webhook-test/69083b0e-989b-4fa9-a091-0bd322884e1f";
+      const finalWebhookUrl = "https://tok19.app.n8n.cloud/webhook-test/69083b0e-989b-4fa9-a091-0bd322884e1f";
 
       const n8nRes = await axios.post(finalWebhookUrl, payload, {
         headers: { "Content-Type": "application/json" },

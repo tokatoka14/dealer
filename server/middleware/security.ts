@@ -30,7 +30,7 @@ export function configureSecurityMiddleware(app: Express) {
           styleSrc: ["'self'", "'unsafe-inline'"],
           scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
           imgSrc: ["'self'", "data:", "blob:", "https:"],
-          connectSrc: ["'self'", "https://tok18.app.n8n.cloud", "https://blablabla233.app.n8n.cloud"],
+          connectSrc: ["'self'", "https://tok19.app.n8n.cloud", "https://blablabla233.app.n8n.cloud"],
           fontSrc: ["'self'", "data:"],
           objectSrc: ["'none'"],
           mediaSrc: ["'self'"],

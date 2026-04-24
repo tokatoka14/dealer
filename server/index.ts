@@ -90,17 +90,21 @@ app.use((req, res, next) => {
 (async () => {
   const { ensureDbBasics } = await import("./db-init");
   let bootstrapSucceeded = false;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       await ensureDbBasics();
       bootstrapSucceeded = true;
       break;
     } catch (e) {
-      console.error(`[db] bootstrap attempt ${attempt} failed`, e);
-      if (attempt === 3) {
+      console.error(`[db] bootstrap attempt ${attempt}/${MAX_ATTEMPTS} failed`);
+      if (attempt === MAX_ATTEMPTS) {
+        console.error('[db] All retry attempts exhausted. Check DATABASE_URL and database availability.');
         throw e;
       }
-      await new Promise((r) => setTimeout(r, 2000 * attempt));
+      const delay = 3000 * attempt;
+      console.log(`[db] Retrying in ${delay}ms...`);
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
 
